@@ -6,7 +6,7 @@ import requests
 import time
 import os
 
-from reddit_data_scraper.db import Submissions, Comments, Errors
+from reddit_data.db import Submissions, Comments, Errors
 
 
 class SubmissionScraper:

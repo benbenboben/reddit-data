@@ -9,13 +9,13 @@ with open(here / 'requirements.txt', 'r') as f:
 
 
 setup(
-    name='reddit-data-scraper',  # Required
+    name='reddit-data',  # Required
     version='0.0.0',
     description='Tools for scraping submissions and comments by subreddit',
-    url='https://github.com/benbenboben/reddit-data-scraper',
+    url='https://github.com/benbenboben/reddit-data',
     author_email='ellis.bh89@gmail.com',
-    package_dir={'': 'reddit_data_scraper'},
-    packages=find_packages(where='reddit_data_scraper'),
+    package_dir={'': 'reddit_data'},
+    packages=find_packages(where='reddit_data'),
     python_requires='>=3.5, <4',
     install_requires=requirements
 )
