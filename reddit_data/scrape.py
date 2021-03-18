@@ -1,13 +1,14 @@
 import pandas as pd
 import praw
-from collections.abc import Iterable
 import json
 import requests
 import time
 import os
+import logging
 
-from reddit_data.db import Submissions, Comments, Errors
+from reddit_data.db import Submissions, Comments, Errors, db
 
+logging.basicConfig(filename='/data/reddit-data.log', level=logging.INFO)
 
 class SubmissionScraper:
     """
@@ -25,12 +26,13 @@ class SubmissionScraper:
         :return: None
         """
         if cutoff is None:
-            cutoff = pd.to_datetime('now')
+            # by default, give posts a week to accumulate votes/comments/etc
+            cutoff = pd.to_datetime('now') - pd.Timedelta('7 days')
 
-        start = int(pd.to_datetime(start).timestamp())
+        # start = int(pd.to_datetime(start).timestamp())
         stop = int(start + pd.Timedelta('1D').total_seconds())
         while True:
-            print(f'{pd.to_datetime(start * 1e9)} -- {pd.to_datetime(stop * 1e9)}', end='\r')
+            logging.info(f'Getting submissions {start} -- {stop}')
 
             url = self.url_factory(start=start, stop=stop)
             data = {}
@@ -42,13 +44,13 @@ class SubmissionScraper:
                 if r.json() == {}:
                     continue
                 data = pd.DataFrame(r.json()['data'])
-
                 data_dict = data[
                     ['id', 'author', 'created_utc', 'num_comments', 'over_18',
                      'permalink', 'score', 'subreddit', 'title', 'selftext']
                 ].to_dict(orient='records')
                 Submissions.insert_many(data_dict).on_conflict(action='IGNORE').execute()
             except Exception as e:
+                logging.info('Error in submission scraping.  See errors table.')
                 if r:
                     status_code = r.status_code
                     text = r.text
@@ -69,10 +71,11 @@ class SubmissionScraper:
 
             stop = int(start + pd.Timedelta('1D').total_seconds())
 
-            if pd.to_datetime(stop) >= cutoff:
+            if start >= pd.to_datetime(cutoff).timestamp():
                 return
 
-            time.sleep(0.5)
+            time.sleep(1)
+        logging.info('Submission scrape completed')
 
     def url_factory(self, start=None, stop=None, blocksize=100):
         """Create URL based on subreddit and start/stop times.
@@ -106,41 +109,44 @@ class CommentScraper:
             user_agent=os.environ.get('REDDIT_USER_AGENT')
         )
 
-    def get_comments(self, submissionid):
+    def get_comments(self, sid):
         """Get all comments for a specific reddit submission and insert into databse.
 
-        :param submissionid: unique id for a reddit submission
+        :param sid: unique id for a reddit submission
         :return: None
         """
-        if isinstance(submissionid, str):
-            submissionid = [submissionid]
+        # if isinstance(sid, str):
+        #     submissionid = [sid]
 
-        if not isinstance(submissionid, Iterable):
-            raise ValueError('Provide submission id as string or list of strings')
+        # if not isinstance(submissionid, Iterable):
+        #     raise ValueError('Provide submission id as string or list of strings')
+        logging.info(f'Scraping comments {sid}')
+        try:
+            data = []
+            sub = self.reddit.submission(id=sid)
+            sub.comments.replace_more(limit=None)
+            comment_queue = sub.comments[:]
+            while comment_queue:
+                comment = comment_queue.pop(0)
+                data.append({
+                    'submission_id': sid,
+                    'author': comment.author,
+                    'body': comment.body,
+                    'id': comment.id,
+                    'score': comment.score,
+                    'parent_id': comment.parent_id
+                })
+                comment_queue.extend(comment.replies)
 
-        for i, sid in enumerate(submissionid):
-            try:
-                data = []
-                sub = self.reddit.submission(id=sid)
-                sub.comments.replace_more(limit=None)
-                comment_queue = sub.comments[:]
-                while comment_queue:
-                    comment = comment_queue.pop(0)
-                    data.append({
-                        'submission_id': sid,
-                        'author': comment.author,
-                        'body': comment.body,
-                        'id': comment.id,
-                        'score': comment.score,
-                        'parent_id': comment.parent_id
-                    })
-                    comment_queue.extend(comment.replies)
+            Comments.insert_many(data).on_conflict(action='IGNORE').execute()
 
-                Comments.insert_many(data).on_conflict(action='IGNORE').execute()
-                time.sleep(1)
-            except Exception as e:
-                Errors.insert(
-                    typ='comments',
-                    params=sid,
-                    info=str(e)
-                )
+            # don't overwhelm source
+            time.sleep(1)
+        except Exception as e:
+            logging.info('Error in comments scraping.  See errors table.')
+            Errors.insert(
+                typ='comments',
+                params=sid,
+                info=str(e)
+            )
+        logging.info(f'Scraping comments completed {sid}')

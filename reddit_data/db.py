@@ -3,8 +3,16 @@ from peewee import *
 import datetime
 import os
 
-
-db = SqliteDatabase(os.environ.get('DB_CONNECTION_STRING'))
+try:
+    db = SqliteDatabase(os.environ['SQLITE_CONNECTION_STRING'])
+except KeyError:
+    db = MySQLDatabase(
+        database=os.environ['MYSQL_DATABASE'],
+        user=os.environ['MYSQL_USER'],
+        password=os.environ['MYSQL_PASSWORD'],
+        host=os.environ['MYSQL_HOST'],
+        port=3306
+    )
 
 
 class BaseModel(Model):
@@ -15,7 +23,7 @@ class BaseModel(Model):
 class Submissions(BaseModel):
     id = CharField(unique=True)
     author = CharField()
-    created_utc = DateTimeField()
+    created_utc = IntegerField()
     num_comments = IntegerField()
     over_18 = BooleanField()
     permalink = CharField()
