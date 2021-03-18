@@ -55,7 +55,9 @@ def main(subreddit, start, stop, daily, ncpu):
 
         start = start_new
 
-        if not daily or start >= int(pd.to_datetime(stop).timestamp()):
+        if not daily:
+            break
+        elif stop is not None and start >= int(pd.to_datetime(stop).timestamp()):
             break
 
         if start >= int((pd.to_datetime('now') - pd.Timedelta('7 days')).timestamp()):
