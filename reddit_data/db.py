@@ -1,5 +1,6 @@
 
 from peewee import *
+from playhouse.pool import PooledPostgresqlExtDatabase
 import datetime
 import os
 
@@ -26,12 +27,19 @@ def get_db():
     try:
         db = SqliteDatabase(os.environ['SQLITE_CONNECTION_STRING'])
     except KeyError:
-        db = MySQLDatabase(
-            database=os.environ['MYSQL_DATABASE'],
-            user=os.environ['MYSQL_USER'],
-            password=os.environ['MYSQL_PASSWORD'],
-            host=os.environ['MYSQL_HOST'],
-            port=3306
+        # db = MySQLDatabase(
+        #     database=os.environ['MYSQL_DATABASE'],
+        #     user=os.environ['MYSQL_USER'],
+        #     password=os.environ['MYSQL_PASSWORD'],
+        #     host=os.environ['MYSQL_HOST'],
+        #     port=3306
+        # )
+        db = PooledPostgresqlExtDatabase(
+            database=os.environ['POSTGRES_DB'],
+            user=os.environ['POSTGRES_USER'],
+            password=os.environ['POSTGRES_PASSWORD'],
+            host=os.environ['POSTGRES_HOST'],
+            port=5432
         )
 
     return db
@@ -53,7 +61,7 @@ class Submissions(BaseModel):
     score = IntegerField()
     subreddit = CharField()
     title = TextField()
-    selftext = TextField(null=True)
+    selftext = TextField(null=False)
     modification_time = DateTimeField(default=datetime.datetime.now)
 
     class Meta:
@@ -62,7 +70,7 @@ class Submissions(BaseModel):
 
 class Comments(BaseModel):
     submission_id = CharField()
-    author = CharField()
+    author = CharField(null=True)
     id = CharField()
     score = IntegerField()
     parent_id = CharField()
@@ -86,3 +94,22 @@ db.connect()
 db.bind([Submissions, Comments, Errors])
 db.create_tables([Submissions, Comments, Errors])
 db.close()
+
+
+@db.atomic()
+def insert_submissions(data_dict):
+    return Submissions.insert_many(data_dict).on_conflict(action='IGNORE').execute()
+
+
+@db.atomic()
+def insert_comments(data_dict):
+    return Comments.insert_many(data_dict).on_conflict(action='IGNORE').execute()
+
+
+@db.atomic()
+def insert_error(**kwargs):
+    return Errors.insert(
+        typ=kwargs.pop('typ'),
+        params=kwargs.pop('params'),
+        info=kwargs.pop('info')
+    ).execute()

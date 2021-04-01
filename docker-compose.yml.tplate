@@ -1,0 +1,79 @@
+version: "3.9"
+
+x-mysql-variables: &db-vars
+  POSTGRES_USER:
+  POSTGRES_PASSWORD:
+  POSTGRES_DB:
+  REDIS_PASSWORD:
+
+
+networks:
+  aitanet:
+    ipam:
+      config:
+        - subnet: 172.20.0.0/24
+
+services:
+  db:
+    image: postgres:11
+    restart: always
+    environment:
+      <<: *db-vars
+    volumes:
+      - /data/psql/:/var/lib/postgresql/
+    networks:
+      - aitanet
+
+  redis:
+    image: bitnami/redis:latest
+    restart: always
+    volumes:
+      - /data/redis/:/bitnami/redis/data
+    environment:
+      <<: *db-vars
+    networks:
+      - aitanet
+
+  populator:
+    build: .
+    networks:
+      - aitanet
+    command: python populate.py ...
+    depends_on:
+      - db
+      - redis
+    links:
+      - db
+      - redis
+    restart: always
+    environment:
+      <<: *db-vars
+      POSTGRES_HOST: db
+      REDIS_HOST: redis
+      REDDIT_CLIENT_ID:
+      REDDIT_CLIENT_SECRET:
+      REDDIT_USER_AGENT:
+    volumes:
+      - /data/:/data/
+
+  scraper:
+    build: .
+    networks:
+      - aitanet
+    command: python process.py
+    depends_on:
+      - db
+      - redis
+    links:
+      - db
+      - redis
+    restart: always
+    environment:
+      <<: *db-vars
+      POSTGRES_HOST: db
+      REDIS_HOST: redis
+      REDDIT_CLIENT_ID:
+      REDDIT_CLIENT_SECRET:
+      REDDIT_USER_AGENT:
+    volumes:
+      - /data/:/data/
