@@ -1,80 +1,94 @@
 import pandas as pd
 import praw
-import json
 import requests
 import time
 import os
 import logging
-import multiprocessing as mp
-
-# lock = mp.Lock()
-
-from reddit_data.db import Submissions, Comments, Errors, get_db
+from reddit_data.db import insert_submissions, insert_comments, insert_error
 
 logging.basicConfig(filename='/data/reddit-data.log', level=logging.INFO)
 
 
-class SubmissionScraper:
+def scrape_id(sid):
+    scraper = Scraper()
+    scraper.scrape(sid)
+
+
+class Scraper:
     """
     Tool for scraping submissions and inserting them into a database.
     """
-    def __init__(self, subreddit):
-        self.subreddit = subreddit
+    def __init__(self):
+        self.reddit = praw.Reddit(
+            client_id=os.environ.get('REDDIT_CLIENT_ID'),
+            client_secret=os.environ.get('REDDIT_CLIENT_SECRET'),
+            user_agent=os.environ.get('REDDIT_USER_AGENT')
+        )
 
-    def get_submissions(self, start=None):
-        """Get list of submissions between give times.
-
-        :param start: earliest timestamp
-        :return: None
-        """
-        stop = int(start + pd.Timedelta('1D').total_seconds())
-        logging.info(f'Getting submissions {start} -- {stop}')
-
-        url = self.url_factory(start=start, stop=stop)
-        status_code = -1
-        text = 'request unsuccessful'
-        r = False
-        data = list()
+    def scrape(self, sid):
+        logging.info(f'Begin scraping {sid}')
+        sub = self.reddit.submission(id=sid)
+        # PRAW lazy-loads objects. it seems like trying to access through the sub.__dict__
+        # doesn't trigger the load (from what i can tell) so we coerce it
+        _ = sub.selftext
+        subcols = [
+            'id', 'author', 'created_utc', 'num_comments', 'over_18',
+             'permalink', 'score', 'subreddit', 'title', 'selftext'
+        ]
+        submission_data = {k: sub.__dict__.get(k, None) for k in subcols}
+        submission_data = pd.DataFrame([submission_data])
+        if submission_data['created_utc'].isna().any():
+            logging.info('Missing required data -- ending early.')
+            return
         try:
-            r = requests.get(url)
-            if r.json() == {}:
-                text = 'Empty response json'
-                raise RuntimeError('Empty response json')
-            data = pd.DataFrame(r.json()['data'])
-            data_dict = data[
-                ['id', 'author', 'created_utc', 'num_comments', 'over_18',
-                 'permalink', 'score', 'subreddit', 'title', 'selftext']
-            ].to_dict(orient='records')
-            logging.info(f'found {len(data_dict)} submissions')
-            # db.connect()
-            db = get_db()
-            Submissions.insert_many(data_dict).on_conflict(action='IGNORE').execute()
-            # db.close()
+            insert_submissions(submission_data.fillna(0).to_dict(orient='records'))
         except Exception as e:
             logging.info('Error in submission scraping.  See errors table.')
-            if r:
-                status_code = r.status_code
-                text = r.text
-            # db.connect()
-            db = get_db()
-            Errors.insert(
-                typ='submission',
-                params=str(start),
-                info=json.dumps({
-                    'status_code': status_code,
-                    'text': text,
-                    'exception': str(e)
-                })
-            ).execute()
-            # db.close()
-        logging.info('Submission scrape completed')
+            insert_error(dict(typ='submission', params=str(sid), info=str(e)))
 
-        if len(data):
-            return data['created_utc'].max()
+        sub.comments.replace_more(limit=int(1e6))
+        comment_queue = sub.comments[:]
+        data = []
+        while comment_queue:
+            comment = comment_queue.pop(0)
+            data.append({
+                'submission_id': sid,
+                'author': comment.author,
+                'body': comment.body,
+                'id': comment.id,
+                'score': comment.score,
+                'parent_id': comment.parent_id
+            })
+            comment_queue.extend(comment.replies)
+        try:
+            insert_comments(data)
+        except Exception as e:
+            logging.info('Error in comments scraping.  See errors table.')
+            insert_error(dict(typ='comments', params=sid, info=str(e)))
+        logging.info(f'Finished scraping {sid}')
+        time.sleep(1)
+
+
+    def get_ids(self, start, subreddit, minutes=10):
+        logging.info(start)
+        start = int(pd.to_datetime(start).timestamp())
+        logging.info(start)
+        stop = int(start + (minutes * 60))
+        url = self.url_factory(start=start, stop=stop, subreddit=subreddit)
+        r = requests.get(url)
+        if not r:
+            return []
+        if r.json() and len(r.json()):
+            data = pd.DataFrame(r.json()['data'])
+            logging.info(f'{start} got {len(data)}')
+            if 'id' in data and len(data):
+                return list(data['id'])
+            else:
+                return []
         else:
-            return stop
+            return []
 
-    def url_factory(self, start=None, stop=None, blocksize=100):
+    def url_factory(self, start=None, stop=None, subreddit=None, blocksize=100):
         """Create URL based on subreddit and start/stop times.
 
         :param start: earlier time
@@ -84,76 +98,11 @@ class SubmissionScraper:
         """
         preamble = f'https://api.pushshift.io/reddit/search/submission/?subreddit='
         if start is None and stop is not None:
-            return preamble + f'{self.subreddit}&sort=asc&sort_type=created_utc&before={stop}&size={blocksize}'
+            return preamble + f'{subreddit}&sort=asc&sort_type=created_utc&before={stop}&size={blocksize}'
         elif start is not None and stop is None:
-            return preamble + f'{self.subreddit}&sort=asc&sort_type=created_utc&after={start}&size={blocksize}'
+            return preamble + f'{subreddit}&sort=asc&sort_type=created_utc&after={start}&size={blocksize}'
         elif start is None and stop is None:
-            return preamble + f'{self.subreddit}&sort=asc&sort_type=created_utc&size={blocksize}'
+            return preamble + f'{subreddit}&sort=asc&sort_type=created_utc&size={blocksize}'
         else:
             return preamble + \
-                   f'{self.subreddit}&sort=asc&sort_type=created_utc&after={start}&before={stop}&size={blocksize}'
-
-
-class CommentScraper:
-    """
-    Object for scraping comments on specific reddit threads.
-    """
-
-    def __init__(self):
-        self.reddit = praw.Reddit(
-            client_id=os.environ.get('REDDIT_CLIENT_ID'),
-            client_secret=os.environ.get('REDDIT_CLIENT_SECRET'),
-            user_agent=os.environ.get('REDDIT_USER_AGENT')
-        )
-
-    def get_comments(self, sid):
-        """Get all comments for a specific reddit submission and insert into databse.
-
-        :param sid: unique id for a reddit submission
-        :return: None
-        """
-        # if isinstance(sid, str):
-        #     submissionid = [sid]
-
-        # if not isinstance(submissionid, Iterable):
-        #     raise ValueError('Provide submission id as string or list of strings')
-        logging.info(f'Scraping comments {sid}')
-        try:
-            data = []
-            sub = self.reddit.submission(id=sid)
-            sub.comments.replace_more(limit=None)
-            comment_queue = sub.comments[:]
-            while comment_queue:
-                comment = comment_queue.pop(0)
-                data.append({
-                    'submission_id': sid,
-                    'author': comment.author,
-                    'body': comment.body,
-                    'id': comment.id,
-                    'score': comment.score,
-                    'parent_id': comment.parent_id
-                })
-                comment_queue.extend(comment.replies)
-
-            # lock.acquire()
-            # db.connect()
-            db = get_db()
-            Comments.insert_many(data).on_conflict(action='IGNORE').execute()
-            # db.close()
-            # lock.release()
-
-            # don't overwhelm source
-            time.sleep(1)
-        except Exception as e:
-            logging.info('Error in comments scraping.  See errors table.')
-            # lock.acquire()
-            # db.connect()
-            db = get_db()
-            Errors.insert(
-                typ='comments',
-                params=sid,
-                info=str(e)
-            )
-            # db.close()
-            # lock.release()
-        logging.info(f'Scraping comments completed {sid}')
+                   f'{subreddit}&sort=asc&sort_type=created_utc&after={start}&before={stop}&size={blocksize}'
