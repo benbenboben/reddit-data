@@ -1,28 +1,44 @@
 version: "3.9"
 
 x-mysql-variables: &db-vars
-  POSTGRES_USER:
-  POSTGRES_PASSWORD:
-  POSTGRES_DB:
-  REDIS_PASSWORD:
-
+  POSTGRES_USER: xyz
+  POSTGRES_PASSWORD: xyz
+  POSTGRES_DB: xyz
+  POSTGRES_HOST: 172.20.0.1
+  PGDATA: /var/lib/postgresql/data
+  REDIS_PASSWORD: xyz
 
 networks:
-  aitanet:
+  mynetwork:
     ipam:
       config:
         - subnet: 172.20.0.0/24
 
 services:
+  pgadmin:
+    container_name: pgadmin4_container
+    image: dpage/pgadmin4
+    restart: always
+    environment:
+      PGADMIN_DEFAULT_EMAIL: admin@admin.com
+      PGADMIN_DEFAULT_PASSWORD: root
+      PGADMIN_LISTEN_PORT: 5050
+    ports:
+      - "5050:5050"
+    networks:
+      - mynetwork
+    links:
+      - "db:pgsql-server"
+
   db:
     image: postgres:11
     restart: always
     environment:
       <<: *db-vars
     volumes:
-      - /data/psql/:/var/lib/postgresql/
+      - /data/psql/:/var/lib/postgresql/data
     networks:
-      - aitanet
+      - mynetwork
 
   redis:
     image: bitnami/redis:latest
@@ -32,13 +48,13 @@ services:
     environment:
       <<: *db-vars
     networks:
-      - aitanet
+      - mynetwork
 
   populator:
     build: .
     networks:
       - aitanet
-    command: python populate.py ...
+    command: python populate.py --subreddit <subreddit> --start <earliest date>
     depends_on:
       - db
       - redis
@@ -50,9 +66,9 @@ services:
       <<: *db-vars
       POSTGRES_HOST: db
       REDIS_HOST: redis
-      REDDIT_CLIENT_ID:
-      REDDIT_CLIENT_SECRET:
-      REDDIT_USER_AGENT:
+      REDDIT_CLIENT_ID: xyz
+      REDDIT_CLIENT_SECRET: xyz
+      REDDIT_USER_AGENT: xyz
     volumes:
       - /data/:/data/
 
@@ -72,8 +88,8 @@ services:
       <<: *db-vars
       POSTGRES_HOST: db
       REDIS_HOST: redis
-      REDDIT_CLIENT_ID:
-      REDDIT_CLIENT_SECRET:
-      REDDIT_USER_AGENT:
+      REDDIT_CLIENT_ID: xyz
+      REDDIT_CLIENT_SECRET: xyz
+      REDDIT_USER_AGENT: xyz
     volumes:
       - /data/:/data/
