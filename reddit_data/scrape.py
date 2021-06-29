@@ -26,7 +26,7 @@ class Scraper:
         )
 
     def scrape(self, sid):
-        logging.info(f'Begin scraping {sid}')
+        # logging.info(f'Begin scraping {sid}')
         sub = self.reddit.submission(id=sid)
         # PRAW lazy-loads objects. it seems like trying to access through the sub.__dict__
         # doesn't trigger the load (from what i can tell) so we coerce it
@@ -65,15 +65,15 @@ class Scraper:
         except Exception as e:
             logging.info('Error in comments scraping.  See errors table.')
             insert_error(dict(typ='comments', params=sid, info=str(e)))
-        logging.info(f'Finished scraping {sid}')
+        # logging.info(f'Finished scraping {sid}')
         time.sleep(1)
 
-
-    def get_ids(self, start, subreddit, minutes=10):
+    def get_ids(self, start, stop, subreddit):
         logging.info(start)
         start = int(pd.to_datetime(start).timestamp())
+        stop = int(pd.to_datetime(stop).timestamp())
         logging.info(start)
-        stop = int(start + (minutes * 60))
+        # stop = int(start + (minutes * 60))
         url = self.url_factory(start=start, stop=stop, subreddit=subreddit)
         r = requests.get(url)
         if not r:

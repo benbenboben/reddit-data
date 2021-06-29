@@ -34,24 +34,26 @@ def main(subreddit, start, stop, daily):
         scraper = Scraper()
 
         warm_start = Submissions.select(fn.MAX(Submissions.created_utc)).scalar()
+        logging.info(f'WARM START: {warm_start}')
         if warm_start is not None:
-            start = warm_start
+            start = warm_start * 1000
+            start = pd.to_datetime(start, unit='ms')
         else:
+            logging.info('warm start set to start')
             start = pd.to_datetime(start)
 
         if stop is None:
             stop = pd.to_datetime('now') - pd.Timedelta('7D')
 
-        logging.info(start)
+        logging.info(f'START: {start}')
+        logging.info(f'STOP: {stop}')
+
 
         myrange = list(pd.date_range(start=pd.to_datetime(start), end=stop, freq='10min'))
 
-        for i in myrange:
-            logging.info(i)
-            idlist = scraper.get_ids(i, subreddit)
-            logging.info(f'Enqueueing {len(idlist)} posts.')
+        for idx in range(len(myrange) - 1):
+            idlist = scraper.get_ids(myrange[idx], myrange[idx + 1], subreddit)
             for sid in idlist:
-                logging.info(f'Enqueueing {sid}')
                 queue.put(sid)
 
         if daily:
