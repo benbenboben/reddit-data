@@ -7,3 +7,4 @@ pymysql
 psycopg2
 redis
 rq
+celery

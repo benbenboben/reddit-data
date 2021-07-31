@@ -4,14 +4,9 @@ import requests
 import time
 import os
 import logging
-from reddit_data.db import insert_submissions, insert_comments, insert_error
+from reddit_data.db import insert_submissions, insert_comments, insert_submissions_pushshift
 
 logging.basicConfig(filename='/data/reddit-data.log', level=logging.INFO)
-
-
-def scrape_id(sid):
-    scraper = Scraper()
-    scraper.scrape(sid)
 
 
 class Scraper:
@@ -44,7 +39,7 @@ class Scraper:
             insert_submissions(submission_data.fillna(0).to_dict(orient='records'))
         except Exception as e:
             logging.info('Error in submission scraping.  See errors table.')
-            insert_error(dict(typ='submission', params=str(sid), info=str(e)))
+            # insert_error(dict(typ='submission', params=str(sid), info=str(e)))
 
         sub.comments.replace_more(limit=int(1e6))
         comment_queue = sub.comments[:]
@@ -64,8 +59,26 @@ class Scraper:
             insert_comments(data)
         except Exception as e:
             logging.info('Error in comments scraping.  See errors table.')
-            insert_error(dict(typ='comments', params=sid, info=str(e)))
-        # logging.info(f'Finished scraping {sid}')
+        time.sleep(1)
+
+    def scrape_pushshift(self, sid):
+        logging.info('HELLO')
+        sub = requests.get(f'https://api.pushshift.io/reddit/submission/search/?ids={sid}').json()['data'][0]
+        subcols = [
+            'id', 'author', 'created_utc', 'num_comments', 'over_18',
+            'permalink', 'score', 'subreddit', 'title', 'selftext'
+        ]
+        # submission_data = {k: sub.__dict__.get(k, None) for k in subcols}
+        submission_data = {k: sub[k] for k in subcols}
+        submission_data = pd.DataFrame([submission_data])
+        if submission_data['created_utc'].isna().any():
+            logging.info('Missing required data -- ending early.')
+            return
+        try:
+            insert_submissions_pushshift(submission_data.fillna(0).to_dict(orient='records'))
+        except Exception as e:
+            logging.info('Error in submission scraping.  See errors table.')
+            # insert_error(dict(typ='submission', params=str(sid), info=str(e)))
         time.sleep(1)
 
     def get_ids(self, start, stop, subreddit):

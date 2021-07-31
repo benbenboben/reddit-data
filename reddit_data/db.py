@@ -68,6 +68,23 @@ class Submissions(BaseModel):
         primary_key = CompositeKey('subreddit', 'id')
 
 
+class SubmissionsPushshift(BaseModel):
+    id = CharField(unique=True)
+    author = CharField()
+    created_utc = IntegerField()
+    num_comments = IntegerField()
+    over_18 = BooleanField()
+    permalink = CharField()
+    score = IntegerField()
+    subreddit = CharField()
+    title = TextField()
+    selftext = TextField(null=False)
+    modification_time = DateTimeField(default=datetime.datetime.now)
+
+    class Meta:
+        primary_key = CompositeKey('subreddit', 'id')
+
+
 class Comments(BaseModel):
     submission_id = CharField()
     author = CharField(null=True)
@@ -91,14 +108,19 @@ class Errors(BaseModel):
 
 db = get_db()
 db.connect()
-db.bind([Submissions, Comments, Errors])
-db.create_tables([Submissions, Comments, Errors])
+db.bind([Submissions, Comments, Errors, SubmissionsPushshift])
+db.create_tables([Submissions, Comments, Errors, SubmissionsPushshift])
 db.close()
 
 
 @db.atomic()
 def insert_submissions(data_dict):
     return Submissions.insert_many(data_dict).on_conflict(action='IGNORE').execute()
+
+
+@db.atomic()
+def insert_submissions_pushshift(data_dict):
+    return SubmissionsPushshift.insert_many(data_dict).on_conflict(action='IGNORE').execute()
 
 
 @db.atomic()

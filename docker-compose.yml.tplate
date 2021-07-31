@@ -3,13 +3,12 @@ version: "3.9"
 x-mysql-variables: &db-vars
   POSTGRES_USER: xyz
   POSTGRES_PASSWORD: xyz
-  POSTGRES_DB: xyz
+  POSTGRES_DB: aita
   POSTGRES_HOST: 172.20.0.1
   PGDATA: /var/lib/postgresql/data
-  REDIS_PASSWORD: xyz
 
 networks:
-  mynetwork:
+  aitanet:
     ipam:
       config:
         - subnet: 172.20.0.0/24
@@ -26,7 +25,7 @@ services:
     ports:
       - "5050:5050"
     networks:
-      - mynetwork
+      - aitanet
     links:
       - "db:pgsql-server"
 
@@ -38,58 +37,76 @@ services:
     volumes:
       - /data/psql/:/var/lib/postgresql/data
     networks:
-      - mynetwork
+      - aitanet
 
-  redis:
+  myredis:
     image: bitnami/redis:latest
     restart: always
     volumes:
       - /data/redis/:/bitnami/redis/data
     environment:
+      ALLOW_EMPTY_PASSWORD: 'yes'
       <<: *db-vars
     networks:
-      - mynetwork
+      - aitanet
 
   populator:
     build: .
     networks:
       - aitanet
-    command: python populate.py --subreddit <subreddit> --start <earliest date>
+    command: python populate.py --subreddit AmItheAsshole --start 2021-03-01
     depends_on:
       - db
-      - redis
+      - myredis
     links:
       - db
-      - redis
-    restart: always
+      - myredis
     environment:
       <<: *db-vars
       POSTGRES_HOST: db
-      REDIS_HOST: redis
       REDDIT_CLIENT_ID: xyz
       REDDIT_CLIENT_SECRET: xyz
       REDDIT_USER_AGENT: xyz
+      CELERY_BROKER: redis://myredis
+      CELERY_BACKEND: redis://myredis
     volumes:
       - /data/:/data/
 
-  scraper:
+  worker:
     build: .
     networks:
       - aitanet
-    command: python process.py
+    command: celery -A tasks worker
     depends_on:
       - db
-      - redis
+      - myredis
     links:
       - db
-      - redis
+      - myredis
     restart: always
     environment:
       <<: *db-vars
       POSTGRES_HOST: db
-      REDIS_HOST: redis
       REDDIT_CLIENT_ID: xyz
       REDDIT_CLIENT_SECRET: xyz
       REDDIT_USER_AGENT: xyz
+      CELERY_BROKER: redis://myredis
+      CELERY_BACKEND: redis://myredis
     volumes:
       - /data/:/data/
+
+  flower:
+    image: mher/flower
+    command: celery flower
+    environment:
+      - FLOWER_PORT=9999
+      - CELERY_BROKER_URL=redis://myredis
+      - CELERY_BACKEND_URL=redis://myredis
+    ports:
+      - 9999:9999
+    depends_on:
+      - myredis
+    links:
+      - myredis
+    networks:
+      - aitanet

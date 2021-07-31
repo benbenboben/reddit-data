@@ -8,7 +8,8 @@ import pandas as pd
 
 from reddit_data.scrape import Scraper
 from reddit_data.db import Submissions
-from reddit_data.queue import RedisQueue
+
+from tasks import scrape_id, scrape_id_pushshift
 
 
 logging.basicConfig(filename='/data/reddit-data.log', level=logging.INFO)
@@ -22,13 +23,6 @@ logging.basicConfig(filename='/data/reddit-data.log', level=logging.INFO)
 def main(subreddit, start, stop, daily):
     if stop is not None:
         daily = False
-
-    queue = RedisQueue(
-        'reddit-data',
-        host=os.environ.get('REDIS_HOST'),
-        port=os.environ.get('REDIS_PORT', 6379),
-        password=os.environ.get('REDIS_PASSWORD')
-    )
 
     while True:
         scraper = Scraper()
@@ -48,13 +42,13 @@ def main(subreddit, start, stop, daily):
         logging.info(f'START: {start}')
         logging.info(f'STOP: {stop}')
 
-
         myrange = list(pd.date_range(start=pd.to_datetime(start), end=stop, freq='10min'))
 
         for idx in range(len(myrange) - 1):
             idlist = scraper.get_ids(myrange[idx], myrange[idx + 1], subreddit)
             for sid in idlist:
-                queue.put(sid)
+                tid = scrape_id.delay(sid)
+                tid_pushshift = scrape_id_pushshift.delay(sid)
 
         if daily:
             time.sleep(60 * 60 * 24)
